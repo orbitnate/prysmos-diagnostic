@@ -1,0 +1,420 @@
+\documentclass[11pt]{article}
+
+% ---------------------------------------------------------------------------
+% A Coverage-Controlled Diagnostic for In-Context Compositional Generalization
+% of a Withheld Causal Mechanism.
+% Workshop / NeurIPS Datasets & Benchmarks draft. All numbers verified against
+% the in-repo result files (2026-06-07, six-agent ground-truth audit).
+% Compiles with: pdflatex main.tex  (self-contained; embedded bibliography).
+% ---------------------------------------------------------------------------
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\modC}{\ \mathrm{mod}\ C}
+\newcommand{\score}{\mathrm{score}}
+\newcommand{\istar}{i^{\!*}}
+
+\title{\textbf{A Coverage-Controlled Diagnostic for In-Context\\
+Compositional Generalization of a Withheld Causal Mechanism}}
+
+\author{Nathan Peterson\\
+\small Prysmos (independent)\\
+\small\texttt{orbitnate@gmail.com}}
+
+\date{June 2026}
+
+\emergencystretch=3em
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a small, \emph{coverage-controlled} diagnostic that tests whether a system can do one specific
+thing in-context: \emph{infer the effect of a causal variable it was never shown a clean intervention
+for}, and compose that inferred effect with directly-observed ones to predict a novel joint intervention.
+The diagnostic has three design features that, to our knowledge, are not combined in existing in-context
+compositional-generalization or causal-foundation-model benchmarks. First, it \textbf{injects the known
+group operation} (modular addition over a finite cyclic group), so a failure cannot be blamed on failing
+to learn the combination rule---the only thing left to learn is the per-variable deconfounded read and its
+transport to a withheld variable. Second, it is \textbf{coverage-controlled and leak-free} by construction:
+the entire interventional block of one variable is withheld, and every prompt row that exactly matches a
+query is removed. Third, before any model is queried it runs a \textbf{\$0 fairness gate}---the same
+analytic composer that defines the score ceiling is executed on \emph{exactly} the prompt rows, and the run
+aborts if the answer is not recoverable. We apply the identical instrument across model scales. A frontier
+LLM (DeepSeek~V4~Flash) reaches the analytic ceiling ($+0.937$, $12/12$ queries exact) on $2$- and
+$3$-variable regimes; a from-scratch $\approx$$74$k-parameter transformer, given the \emph{same} injected
+group structure, collapses to $\approx 0$ even on the easy all-revealed case, and increasing training-task
+diversity does not fix it. We argue the contribution is the \emph{instrument and its controls}, not the
+(already-documented) memorize-vs-infer phenomenon, and we are explicit about the limits: single seed,
+single LLM, an easy identifiable regime, and a diversity-threshold argument that is a-priori rather than
+fully empirical.
+\end{abstract}
+
+% ===========================================================================
+\section{Introduction}
+% ===========================================================================
+A growing literature shows that transformers can compose skills in-context but often \emph{memorize}
+rather than \emph{infer} when the training distribution is narrow~\cite{he2024grok,kobayashi2024when},
+with a task-diversity threshold governing the transition~\cite{raventos2023pretraining,nguyen2024kinetics}.
+In parallel, ``causal foundation models'' learn to do amortized causal inference in-context
+\cite{ke2023csiva,sauter2025activa,mahajan2025condfip,robertson2025dopfn}, but their generalization is
+typically evaluated over held-out \emph{graphs}, \emph{datasets}, or \emph{distribution shift}---not over a
+held-out \emph{mechanism}. We isolate a narrower, cleaner primitive:
+
+\begin{quote}
+\emph{Given confounded observational data and clean interventional (``forced'') data for some variables but
+\textbf{none} for one withheld variable~$\istar$, can a system infer $\istar$'s effect by cross-referencing
+the other interventions, and compose all effects to predict a novel joint intervention---with no
+side-channel revealing the answer?}
+\end{quote}
+
+\paragraph{On terminology.} We call this \emph{compositional generalization of a withheld causal
+mechanism}. It is \emph{not} Pearl--Bareinboim transportability (recovering an effect across domains related
+by a selection diagram); we do not invoke the transport formula, and we use the word ``transport'' only
+informally for ``carry an inferred per-variable effect across interventional blocks.''
+
+\paragraph{Contribution.} The contribution is a \emph{measurement instrument}, not a new phenomenon. Its
+three load-bearing properties are: (i) \textbf{injecting the known combine operator} so a negative result
+cannot be attributed to failure to learn the operation; (ii) \textbf{coverage control and leak removal} via
+a whole-variable holdout plus exact-assignment exclusion; and (iii) a \textbf{\$0 pre-flight fairness
+gate} that runs the analytic ceiling composer on the literal prompt rows and aborts unfair instances before
+any spend---so every reported number is fair on its exact prompt rows by construction. We then run the \emph{same} instrument on a tiny from-scratch model and on a frontier LLM,
+yielding a clean scale contrast. We report honestly that the LLM passing an identifiable task is expected;
+the value is the instrument and the controls, and the contrast they make legible.
+
+% ===========================================================================
+\section{Related work}
+% ===========================================================================
+\paragraph{In-context skill composition and memorization.} He et al.~\cite{he2024grok} show emergence of
+in-context skill composition in modular arithmetic; Kobayashi, Schug et al.~\cite{kobayashi2024when}
+characterize when transformers compositionally generalize in-context. Both report a memorize-vs-compose
+distinction closely related to what our negative arm measures; our addition is the causal/coverage framing
+and the injected operator, not the phenomenon. Lippl \& Stachenfeld~\cite{lippl2025kernel} give a kernel
+theory for when compositional structure yields compositional generalization.
+
+\paragraph{Task diversity thresholds.} Raventós et al.~\cite{raventos2023pretraining} establish that a
+\emph{pretraining task-diversity threshold} (on the order of $2^{14}$ tasks in their regression setting)
+governs the emergence of non-Bayesian in-context learning; Nguyen \& Reddy~\cite{nguyen2024kinetics} analyze
+the learning kinetics of the memorization-to-generalization transition. We discuss in \S\ref{sec:limits} why
+injecting the operator changes the relevance of this threshold to our setting.
+
+\paragraph{Amortized / in-context causal models.} CSIvA~\cite{ke2023csiva} learns to induce causal
+structure; ACTIVA~\cite{sauter2025activa}, Cond-FiP~\cite{mahajan2025condfip}, and
+Do-PFN~\cite{robertson2025dopfn} amortize causal-effect estimation in-context. Montagna et
+al.~\cite{montagna2025demystify} show amortized causal-discovery transformers remain bound by
+identifiability and do not transport off-distribution. GIM~\cite{schneider2024gim} generalizes to unseen
+intervention targets but with an informative side-channel; removing that side-channel is precisely our
+test. Abedsoltan et al.~\cite{abedsoltan2025taskgen} study autoregressive compositional task generalization
+($D\!\to\!D^{T}$). Across these, we did not find the specific slice---\emph{infer a globally-withheld
+intervention effect, no side-channel, with the combine operator injected and a \$0 pre-flight fairness
+gate}---and that gap is the instrument's claim to novelty (an absence-of-evidence claim; see
+\S\ref{sec:limits}).
+
+% ===========================================================================
+\section{The diagnostic}\label{sec:method}
+% ===========================================================================
+
+\paragraph{World.} A world has $n$ dials, each taking values in $\{0,\dots,C-1\}$, and a meter
+$R\in\{0,\dots,C-1\}$. Each dial $i$ has a secret bijection (conversion table) $g_i$, drawn as a uniform
+random permutation of $\{0,\dots,C-1\}$. The meter is additive over the cyclic group:
+\begin{equation}
+R \;=\; \Big(\textstyle\sum_{i=1}^{n} g_i(d_i) \;+\; \eta_R\Big)\modC,
+\end{equation}
+where $\eta_R$ is meter noise. A hidden state $H\sim\mathrm{Uniform}\{0,\dots,C-1\}$ confounds the system:
+in observational data every free dial is $d_i=(H+\eta_i)\modC$ (so the dials are correlated through $H$ and
+naive dial-vs-meter statistics mislead). Noise is sparse: each free dial value is replaced by a fresh
+uniform draw with probability $0.15$ (else driven by $H$), and the meter is corrupted with probability
+$0.06$. An intervention $\mathrm{do}(d_i\!=\!v)$ fixes dial $i$ to $v$ while the others remain free.
+
+\paragraph{Prompt.} The system is shown, in-context: (a) confounded \emph{observational} rows;
+(b) clean \emph{forced} (interventional) blocks $\mathrm{do}(d_i\!=\!v)$ for the \emph{present} dials; and
+(c) \emph{nothing} for one \textbf{withheld} dial $\istar$, whose entire forced block is removed.
+$\istar=\mathrm{hash}(\text{seed})\bmod n$ is fixed per world, chosen blind to outcomes. The query asks for
+$R$ under a novel joint forcing $(\,d_{\istar}\!=\!v,\;d_j\!=\!w\,)$ with $v\neq\mathrm{ref}$ ($\mathrm{ref}=0$),
+a combination never shown. Because $\istar$'s block is absent, its effect must be inferred \emph{across}
+blocks---from how the meter shifts as $\istar$ wanders inside another dial's forced block---then composed
+with the directly-read effects.
+
+\paragraph{Analytic composer = information ceiling.} A reference reasoner reconstructs the answer from the
+per-row $(d,R)$ data only, never the answer key. For each present dial it recovers
+$g_i(v)-g_i(\mathrm{ref})$ as a relative mode-shift inside its forced block, conditioning the other dials to
+a common value $w_0$ so the shared background cancels. For the withheld dial it recovers
+$g_{\istar}(v)-g_{\istar}(\mathrm{ref})$ \emph{cross-block}, from rows inside another dial's forced block
+where the still-free $\istar$ takes $v$ vs.\ $\mathrm{ref}$. It anchors the constant
+$K=\sum_i g_i(\mathrm{ref})$ from all-reference rows, and predicts a point mass at
+$(K+\sum_i [g_i(a_i)-g_i(\mathrm{ref})])\modC$. A conditioning cell is trusted only with
+$\geq\!10$ rows. This composer defines the achievable \emph{ceiling}; because the meter is mildly noisy, a
+point mass cannot reach the diffuse oracle exactly, capping the ceiling in $[0.933,0.938]$ (below $1$).
+
+\paragraph{Score.} For a predicted distribution $p$ and the oracle joint-do distribution $q$ over
+$\{0,\dots,C-1\}$, with $u$ the uniform distribution, define the total-variation similarities
+$\mathrm{tv}(p)=1-\tfrac12\|p-q\|_1$ and $U=\mathrm{tv}(u)$, and
+\begin{equation}
+\score(p)\;=\;\mathrm{clip}\!\Big(\frac{\mathrm{tv}(p)-U}{1-U},\,-1,\,1\Big).
+\end{equation}
+An uninformed (uniform) prediction scores $0$; an exact match scores $1$ up to oracle diffuseness.
+
+\paragraph{Leak controls.} Two exclusions, both required: (1) the \emph{whole-dial holdout} drops every
+forced block of $\istar$ (so the effect cannot be obtained by elimination); (2) the
+\emph{exact-assignment exclusion} drops every prompt row (observational or forced) whose dial values
+exactly match \emph{any} query, closing a single-row lookup leak that a $2$-dial design otherwise admits.
+
+\paragraph{\$0 pre-flight fairness gate.} Before any model is queried, the run asserts that
+(a)~$\istar$ has zero forced blocks, (b)~no remaining prompt row matches any query assignment, and
+(c)~the analytic composer, executed on \emph{exactly} the rows that go into the prompt, scores mean
+$\geq 0.80\times\text{ceiling}$ and is $100\%$ populated. If any check fails the instance is unfair and the
+run \textbf{aborts with no model call}. Because the composer consumes the same row object that renders the
+prompt, ``the test was fair on the exact prompt rows'' holds by construction for every reported number.
+This gate operationalizes a lesson from our own prior work, where an apparent effect turned out to be a
+coverage artifact (a model graded on cells it never sampled).
+
+\paragraph{Feasibility is decoupled from difficulty.} A useful property (Table~\ref{tab:ceiling}): the
+analytic ceiling stays in $[0.933,0.938]$ \emph{independent} of the group size $C$ and the dial count---only
+the per-block row budget needed to populate the conditioning cells grows. Difficulty can therefore be raised
+for a model while the test remains fair at a fixed ceiling.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Regime & Ceiling (3-seed range) & Min.\ fair rows/block & Floor (strongest cheater)\\
+\midrule
+$2$ dials, $C{=}4$ & $0.933$--$0.937$ & $75$  & $\approx 0$\\
+$2$ dials, $C{=}5$ & $0.934$--$0.937$ & $150$ & $\approx 0$\\
+$2$ dials, $C{=}6$ & $0.934$--$0.937$ & $150$ & $\approx 0$\\
+$2$ dials, $C{=}7$ & $0.934$--$0.936$ & $150$ & $\approx 0$\\
+$2$ dials, $C{=}8$ & $0.934$--$0.936$ & $150$ & $\approx 0$\\
+$3$ dials, $C{=}3$ & $0.936$--$0.937$ & $300$ & $\approx 0$\\
+$3$ dials, $C{=}4$ & $0.936$--$0.938$ & $600$ & $\approx 0$\\
+\midrule
+\textbf{All regimes} & \textbf{$0.933$--$0.938$} & --- & ---\\
+\bottomrule
+\end{tabular}
+\caption{Feasibility/identifiability sweep (analytic composer; seeds $20260606$--$08$). The ceiling is
+essentially constant across $C$ and dial count; only the coverage budget grows. ``Min.\ fair rows/block''
+is the smallest budget at which both the all-revealed and withheld ceilings are $\geq 0.70$ and $100\%$
+populated on all three seeds.}
+\label{tab:ceiling}
+\end{table}
+
+% ===========================================================================
+\section{Validity of the instrument}\label{sec:validity}
+% ===========================================================================
+Before using the diagnostic to make claims about models, we validate it against constructed ground truth
+(known composer and known shortcuts, plus a within-system ablation whose direction we know)---never against
+the unproven assumption ``bigger model is better.'' Six pre-registered controls were run on
+$3$ master seeds $\{20260605,20260606,20260607\}$, levels $\{2,3,4\}$ dials, $C{=}5$, with up to $30$ puzzles
+per cell (fewer---$16$ to $17$---at $2$ dials, where fewer valid pairs exist). Results in
+Table~\ref{tab:validity}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{p{0.50\linewidth}p{0.42\linewidth}}
+\toprule
+Control & Result\\
+\midrule
+\textbf{1. Real analytic composer} (positive control) & scores $0.934$--$0.939$ across all 9 cells\\
+\textbf{2. Non-compositional cheaters fail} (one-cause, modal-obs, nearest-cell) & worst single cheater
+mean $+0.066$; all $\leq$ the pre-registered $0.10$ bar\\
+\textbf{3. Graded mixtures are monotone} & Spearman $\rho=1.000$, monotone in every cell\\
+\textbf{4. Ablation (deny forced data)} & composer drops by $+0.83$ to $+1.10$\\
+\textbf{5. Shortcut-bait memorizer} & memorizer $\to 1.000$ while the composer is unchanged
+($\Delta=0.000$)\\
+\textbf{6. Retrieval$+$add baseline} (the ``is it just lookup?'' attack) & pooled $+0.025$
+$[-0.05,+0.10]$ vs.\ composer $+0.937$\\
+\bottomrule
+\end{tabular}
+\caption{Six pre-registered validity controls. The instrument credits genuine deconfound-then-compose and
+rejects retrieval, memorization, and the named shortcuts. Control~6 directly answers the strongest external
+critique (a naive retrieval$+$add would tie the composer): it does not, because the prompt shows
+\emph{still-confounded} forced rows, so there is no clean cell to look up---deconfounding is required.}
+\label{tab:validity}
+\end{table}
+
+% ===========================================================================
+\section{The scale contrast}\label{sec:results}
+% ===========================================================================
+
+\paragraph{Applying the instrument to a frontier LLM (single demonstration).}
+This is one existence-point---a single seed, a single model, and $3$ held queries $\times\,4$ samples per
+regime---not a curve or a claim about LLMs in general. On the fair, leak-free regimes, DeepSeek~V4~Flash
+(thinking mode, seed $20260606$) reaches the analytic ceiling (Table~\ref{tab:llm}): on both the $2$-dial
+$C{=}4$ and $3$-dial $C{=}3$ regimes it scores $+0.937$ ($=$ ceiling) with all $12$ samples
+($3$ queries $\times\,4$) exact. An all-revealed positive control (the same format with $\istar$'s block
+\emph{present}) also reaches the ceiling, so the instrument's format is solvable for this model; a data-free
+arithmetic control (same question, no data) fails, and non-compositional cheaters stay far below the
+ceiling---so the score reflects genuine deconfound-then-compose, not priors, memorization, or pretraining
+contamination.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+Regime & Whole-dial (test) & All-revealed (ctrl) & Ceiling & Exact & No-data control & Strongest cheater\\
+\midrule
+$2$ dials, $C{=}4$ & $+0.937$ & $+0.937$ & $+0.937$ & $12/12$ & $-0.39$ & $+0.003$\\
+$3$ dials, $C{=}3$ & $+0.937$ & $+0.937$ & $+0.937$ & $12/12$ & $-0.06^{\dagger}$ & $+0.13^{\ddagger}$\\
+\bottomrule
+\end{tabular}
+\caption{DeepSeek~V4~Flash on the fair, gate-checked regimes. ``All-revealed (ctrl)'' is the positive
+control with $\istar$'s forced block \emph{present} (same prompt format, nothing withheld); it reaches the
+ceiling on both regimes, so the format is solvable for this model and the whole-dial result is not a
+format/tally limit. ``Strongest cheater'' is the per-query
+maximum over the three cheaters, averaged over queries. $^{\dagger}$The $3$-dial no-data control averages
+$-0.06$ because on one of three queries the data-free modal guess coincidentally matched the true value
+($+0.94$); on the other two it is $-0.56$. This coincidence (a single-seed, $3$-query artifact) is exactly
+why the rigorous floor comes from the multi-seed validation suite (\S\ref{sec:validity}), not from the LLM
+run's controls. $^{\ddagger}$Driven by the nearest-cell cheater scoring $+0.21$/$+0.18$ on two queries; still
+$\ll$ ceiling.}
+\label{tab:llm}
+\end{table}
+
+\paragraph{A tiny model in the same family collapses to memorization.}
+A from-scratch transformer ($\approx$$74$k parameters) with the group structure \emph{injected} (exact
+circular-convolution combine) and per-dial read supervision, trained and evaluated on the same task family
+($n{=}3$, $C{=}5$): with the curriculum that supervises only \emph{present} dials' reads (forcing it to
+infer the withheld one), it fits the training data but the held-query withheld-effect score is $-0.08$;
+a joint-only variant scores $-0.02$. The independently validated architecture \emph{can} express the answer
+(an all-supervised, nothing-withheld sanity reaches $+0.964$), so this is a learning failure, not a capacity
+ceiling.
+
+\paragraph{Diversity is not the lever.}
+A natural hypothesis is that the small model merely sits below a task-diversity threshold. We tested this
+directly (Table~\ref{tab:diversity}). At $W{=}32$ training worlds the model groks the training objective
+(training loss reaches a minimum of $\approx 0.009$) yet scores $\approx 0$ on \emph{both} the withheld test
+\emph{and} the easy all-revealed sanity (held queries, all blocks present). A prior report that higher
+diversity ``stalls optimization'' at $W{=}256$ was a learning-rate artifact: at lr $3\!\times\!10^{-4}$ and
+$10^{-3}$ the training loss descends well below the uniform-prediction floor ($L_0\approx 2.96$), to $2.03$
+and $1.71$ respectively---optimization is alive---yet the held-query scores remain $\approx 0$. Thus the
+model never demonstrates a generalizing read-and-compose at \emph{any} diversity tried, even when no effect
+is withheld; increasing $W$ is not what is missing.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Worlds $W$ & lr & Min.\ training loss & Withheld score & All-revealed score\\
+\midrule
+$32$  & $10^{-3}$          & $0.009$ & $+0.016$ & $+0.004$\\
+$256$ & $3\times10^{-4}$   & $2.03$  & $-0.002$ & $-0.001$\\
+$256$ & $10^{-3}$          & $1.71$  & $-0.010$ & $-0.001$\\
+\bottomrule
+\end{tabular}
+\caption{Tiny-model diversity sweep ($n{=}3$, $C{=}5$, $\approx$$74$k params, $12$k steps, single seed).
+The uniform-prediction training-loss floor is $L_0\approx 2.96$. At $W{=}32$ the model groks training
+(min loss $0.009$) but scores $\approx 0$ on held queries including the easy all-revealed case; at $W{=}256$
+optimization is alive (loss $\ll L_0$) but held-query scores stay $\approx 0$. (At $W{=}32$ the loss minimum
+is reached mid-run; the final-step loss bounces to $\approx 0.21$.)}
+\label{tab:diversity}
+\end{table}
+
+% ===========================================================================
+\section{Limitations}\label{sec:limits}
+% ===========================================================================
+We state the limits plainly; several are load-bearing.
+\begin{itemize}
+\item \textbf{Single seed, single LLM} for the headline contrast: clean points, not curves.
+\item \textbf{Easy, identifiable regime} (additive over a cyclic group, small $C$, $2$--$3$ dials, clean
+noise). We found no fair regime where the LLM \emph{breaks}; an LLM passing a known-identifiable task is
+expected, so the value is the contrast and the controls, not surprising the LLM.
+\item \textbf{The diversity-threshold defense is a-priori, not fully empirical.} Raventós et
+al.~\cite{raventos2023pretraining} place the threshold near $2^{14}$ tasks; our $W\leq 256$ is far below it.
+We argue---but do not empirically close---that injecting the combine operator removes the threshold's
+relevance: the diversity threshold governs learning the \emph{task family}, whereas here the family
+(circular convolution) is \emph{given}, leaving only the per-dial deconfounded read; the
+$W{=}32$-grokked-but-fails-the-easy-revealed-case control shows the model cannot even do the read it was
+shown, independent of diversity. A fully empirical close ($W\gg 2^{14}$, longer training) is future work.
+\item \textbf{Novelty rests partly on absence of evidence}---an uncovered slice in the surveyed literature,
+not a proof of non-existence.
+\item \textbf{Causal scope.} This is compositional generalization of a withheld mechanism, not
+Pearl--Bareinboim cross-domain transportability; we do not claim the latter.
+\item \textbf{Tiny-model arm:} the joint-only headline may reflect an optimization wall rather than a pure
+transport collapse; the read-supervised (aux-on) arm is the cleaner evidence and is what we lead with.
+\end{itemize}
+
+% ===========================================================================
+\section{Conclusion}
+% ===========================================================================
+We contribute a small, coverage-controlled diagnostic for in-context compositional generalization of a withheld
+causal mechanism: it injects the known group operation to isolate transport from operation-learning, removes
+coverage and lookup leaks by construction, and checks fairness on the literal prompt rows at \$0 before
+any model call. Used across scale, it makes a clean contrast legible---a frontier LLM infers the withheld
+mechanism at the analytic ceiling, while a tiny model given the same structure collapses to memorization and
+diversity does not rescue it. The phenomenon is not new; the rigor of the measurement is the point.
+
+\paragraph{Reproducibility.} {\sloppy Code and data:
+\url{https://github.com/orbitnate/prysmos-diagnostic}.
+All numbers above are taken from in-repo artifacts:
+\texttt{LLM\_WHOLEDIAL\_C4\_2DIAL\_2026-06-06.json}, \texttt{LLM\_3DIAL\_C3\_2026-06-06.json},
+\texttt{LLM\_\allowbreak WHOLEDIAL\_\allowbreak C4\_\allowbreak 2DIAL\_\allowbreak REVEALED\_\allowbreak 2026-06-07.json},
+\texttt{LLM\_\allowbreak 3DIAL\_\allowbreak C3\_\allowbreak REVEALED\_\allowbreak 2026-06-07.json} (all-revealed positive controls),
+\texttt{GATE0\_TRAINABILITY\_2026-06-06.md}, \texttt{RUNG1\_RESULTS\_2026-06-05.md},
+\texttt{TOOL\_VALIDATION\_RESULTS\_2026-06-05.md}, and the \texttt{\_ramp\_*} sweep files; code in
+\texttt{llm\_composition\_ramp.py}, \texttt{llm\_wholedial\_pilot.py}, \texttt{rung1\_preflight.py},
+\texttt{rung1\_train.py}.\par}
+
+% ===========================================================================
+\begin{thebibliography}{99}
+\small\sloppy
+
+\bibitem{he2024grok} T.~He, D.~Doshi, A.~Das, A.~Gromov.
+\emph{Learning to grok: Emergence of in-context learning and skill composition in modular arithmetic tasks.}
+NeurIPS 2024 (Oral). arXiv:2406.02550.
+
+\bibitem{kobayashi2024when} S.~Kobayashi, S.~Schug, Y.~Akram, F.~Redhardt, J.~von~Oswald, R.~Pascanu,
+G.~Lajoie, J.~Sacramento.
+\emph{When can transformers compositionally generalize in-context?} arXiv:2407.12275.
+
+\bibitem{lippl2025kernel} S.~Lippl, K.~Stachenfeld.
+\emph{When does compositional structure yield compositional generalization? A kernel theory.}
+ICLR 2025. arXiv:2405.16391.
+
+\bibitem{raventos2023pretraining} A.~Raventós, M.~Paul, F.~Chen, S.~Ganguli.
+\emph{Pretraining task diversity and the emergence of non-Bayesian in-context learning for regression.}
+NeurIPS 2023. arXiv:2306.15063.
+
+\bibitem{nguyen2024kinetics} A.~Nguyen, G.~Reddy.
+\emph{Differential learning kinetics govern the transition from memorization to generalization during
+in-context learning.} arXiv:2412.00104.
+
+\bibitem{ke2023csiva} N.~R.~Ke, S.~Chiappa, J.~X.~Wang, A.~Goyal, J.~Bornschein, M.~Rey, T.~Weber,
+M.~Botvinick, M.~Mozer, D.~J.~Rezende.
+\emph{Learning to induce causal structure (CSIvA).} ICLR 2023. arXiv:2204.04875.
+
+\bibitem{sauter2025activa} A.~Sauter, S.~Salehkaleybar, A.~Plaat, E.~Acar.
+\emph{ACTIVA: Amortized causal effect estimation via transformer-based variational autoencoder.}
+arXiv:2503.01290.
+
+\bibitem{mahajan2025condfip} D.~Mahajan, J.~Gladrow, A.~Hilmkil, C.~Zhang, M.~Scetbon.
+\emph{Amortized inference of causal models via conditional fixed-point iterations (Cond-FiP).}
+TMLR 2025. arXiv:2410.06128.
+
+\bibitem{robertson2025dopfn} J.~Robertson, et al.
+\emph{Do-PFN: In-context learning for causal effect estimation.} NeurIPS 2025. arXiv:2506.06039.
+
+\bibitem{montagna2025demystify} F.~Montagna, M.~Cairney-Leeming, D.~Sridhar, F.~Locatello.
+\emph{Demystifying amortized causal discovery with transformers.} TMLR 2025. arXiv:2405.16924.
+
+\bibitem{schneider2024gim} N.~Schneider, L.~Lorch, N.~Kilbertus, B.~Schölkopf, A.~Krause.
+\emph{Generative intervention models for causal perturbation modeling (GIM).} arXiv:2411.14003.
+
+\bibitem{abedsoltan2025taskgen} A.~Abedsoltan, H.~Zhang, K.~Wen, H.~Lin, J.~Zhang, M.~Belkin.
+\emph{Task generalization with autoregressive compositional structure: Can learning from $D$ tasks
+generalize to $D^{T}$ tasks?} arXiv:2502.08991.
+
+\end{thebibliography}
+
+\end{document}

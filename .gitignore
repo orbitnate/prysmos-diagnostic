@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# environments
+.venv/
+venv/
+
+# secrets — never commit API keys
+.deepseek_key
+*.key
+.env
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.synctex.gz
+
+# OS
+.DS_Store

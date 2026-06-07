@@ -1,0 +1,114 @@
+{
+  "model": "deepseek-v4-flash",
+  "seed": 20260606,
+  "regime": {
+    "n_causes": 3,
+    "C": 3
+  },
+  "i_star": 0,
+  "n_do": 300,
+  "n_obs": 300,
+  "bar": 0.7496,
+  "ceiling": 0.9368064323210844,
+  "rows": [
+    {
+      "assign": [
+        2,
+        1,
+        2
+      ],
+      "true": 0,
+      "llm_wholedial": 0.9368064323210844,
+      "ok_wholedial": 4,
+      "llm_revealed": 0.0,
+      "ok_revealed": -1,
+      "llm_arith_nodata": -0.5630540235231575,
+      "ok_arith": 4,
+      "composer_ceiling": 0.9368064323210844,
+      "cheat_one_cause": 0.008598577978603255,
+      "cheat_modal_obs": -0.0051963585620305695,
+      "cheat_nearest_cell": 0.2093632629109605,
+      "dist_wholedial": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "dist_revealed": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "oracle": [
+        0.960375,
+        0.0199,
+        0.019725
+      ]
+    },
+    {
+      "assign": [
+        2,
+        1,
+        0
+      ],
+      "true": 2,
+      "llm_wholedial": 0.9368064323210844,
+      "ok_wholedial": 4,
+      "llm_revealed": 0.0,
+      "ok_revealed": -1,
+      "llm_arith_nodata": -0.5633331118346733,
+      "ok_arith": 4,
+      "composer_ceiling": 0.9368064323210844,
+      "cheat_one_cause": -0.0038806565220279683,
+      "cheat_modal_obs": 0.0014618911555585247,
+      "cheat_nearest_cell": -0.3977131493910016,
+      "dist_wholedial": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "dist_revealed": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "oracle": [
+        0.0199,
+        0.019725,
+        0.960375
+      ]
+    },
+    {
+      "assign": [
+        1,
+        0,
+        1
+      ],
+      "true": 1,
+      "llm_wholedial": 0.9368064323210844,
+      "ok_wholedial": 4,
+      "llm_revealed": 0.0,
+      "ok_revealed": -1,
+      "llm_arith_nodata": 0.9368064323210844,
+      "ok_arith": 4,
+      "composer_ceiling": 0.9368064323210844,
+      "cheat_one_cause": -0.0038806565220279683,
+      "cheat_modal_obs": 0.0037344674064722218,
+      "cheat_nearest_cell": 0.1818957670004892,
+      "dist_wholedial": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "dist_revealed": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "oracle": [
+        0.019725,
+        0.960375,
+        0.0199
+      ]
+    }
+  ]
+}
